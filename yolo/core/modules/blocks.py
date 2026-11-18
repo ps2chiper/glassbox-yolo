@@ -229,34 +229,36 @@ class SPPF(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, 
-                 dim: int, 
-                 num_heads: int = 8, 
-                 attn_ratio: float = 0.5) -> None:
-        super().__init__()
+    """Spatial multi-head attention with a depthwise positional projection."""
 
+    def __init__(self, dim: int, num_heads: int = 8, attn_ratio: float = 0.5) -> None:
+        super().__init__()
         self.num_heads = num_heads
-        self.head_dim = int(dim // num_heads)
-        self.key_dim = max(int(self.head_dim * attn_ratio), 1)
-        key_dim_n = self.key_dim * num_heads
+        self.head_dim = dim // num_heads
+        self.key_dim = max(1, int(attn_ratio * self.head_dim))
         self.normalize_scale = self.key_dim ** -0.5
-        self.qkv = Conv(dim, dim + 2 * key_dim_n, 1, act=False)
-        self.proj = Conv(dim, dim, 1, act=False)
-        self.pe = Conv(dim, dim, 3, 1, groups=dim, act=False)
+
+        # These names and the per-head channel order are part of the checkpoint format.
+        packed_channels = dim + 2 * num_heads * self.key_dim
+        self.qkv = Conv(dim, packed_channels, kernel_size=1, act=False)
+        self.proj = Conv(dim, dim, kernel_size=1, act=False)
+        self.pe = Conv(dim, dim, kernel_size=3, groups=dim, act=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        b, c, h, w = x.shape
-        n = h * w
-        qkv = self.qkv(x)
-        q, k, v = qkv.view(b, self.num_heads, self.key_dim * 2 + self.head_dim, n).split(
-            [self.key_dim, self.key_dim, self.head_dim], dim=2
-        )
-        attn = (q.transpose(-2, -1) @ k) * self.normalize_scale
-        attn = attn.softmax(dim=-1)
-        out = (v @ attn.transpose(-2, -1)).view(b, c, h, w)
-        return self.proj(out + self.pe(v.reshape(b, c, h, w)))
-
-        
+        head_width = 2 * self.key_dim + self.head_dim
+        packed = self.qkv(x).reshape(x.shape[0], self.num_heads, head_width, -1)
+        tokens = packed.transpose(2, 3)  # batch, heads, spatial positions, channels
+        widths = (self.key_dim, self.key_dim, self.head_dim)
+        query, key, value = tokens.split(widths, dim=-1)
+        if torch.onnx.is_in_onnx_export():
+            # The legacy exporter supports Einsum at the project's default opset 12.
+            scores = torch.einsum("bhid,bhjd->bhij", query, key)
+            weights = torch.softmax(scores * self.normalize_scale, dim=-1)
+            context = torch.einsum("bhij,bhjv->bhiv", weights, value)
+        else:
+            context = F.scaled_dot_product_attention(query, key, value, scale=self.normalize_scale)
+        position = self.pe(value.transpose(2, 3).reshape_as(x))
+        return self.proj(context.transpose(2, 3).reshape_as(x) + position)
 
 
 class PSABlock(nn.Module):
@@ -272,9 +274,13 @@ class PSABlock(nn.Module):
         self.add = shortcut
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x + self.attn(x) if self.add else self.attn(x)
-        x = x + self.ffn(x) if self.add else self.ffn(x)
+        for layer in (self.attn, self.ffn):
+            transformed = layer(x)
+            if self.add:
+                transformed = x + transformed
+            x = transformed
         return x
+
 
 class AConv(nn.Module):
     def __init__(self,

@@ -11,10 +11,13 @@ logger = get_logger()
 
 
 def copy_attr(a, b, include=(), exclude=()):
-    for k, v in b.__dict__.items():
-        if (len(include) and k not in include) or k.startswith("_") or k in exclude:
-            continue
-        setattr(a, k, v)
+    """Shallow-copy selected public instance attributes in source order."""
+    attributes = vars(b)
+    names = attributes.keys() if not include else attributes.keys() & set(include)
+    selected = names - set(exclude)
+    for name in attributes:
+        if name in selected and name[:1] != "_":
+            setattr(a, name, attributes[name])
 
 
 def bbox_iou(box1, box2, do_CIou=False, eps=1e-7):
