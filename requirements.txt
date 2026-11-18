@@ -86,7 +86,6 @@ jupyterlab_widgets==3.0.13
 kiwisolver==1.4.8
 lightly==1.5.20
 lightly-utils==0.0.2
-lightly_train==0.6.3
 lightning-utilities==0.14.3
 Markdown==3.8
 markdown-it-py==3.0.0

@@ -5,7 +5,6 @@ import math
 from copy import deepcopy
 
 from ..core.logger import get_logger
-from yolo.data.dataset_utils import cxcywh_to_xyxy, xyxy_to_cxcywh
 
 logger = get_logger()
 
@@ -128,20 +127,18 @@ class TaskAlignedAssigner(nn.Module):
         targetr_bboxes: (batch_size, max_num_targets, 4)
         anchor_points: (num_anchors, 2)
         '''
+        lower, upper = target_bboxes.split(2, dim=-1)
         if expand_small_boxes:
-            target_shape = target_bboxes.shape
-            target_bboxes_xywh = xyxy_to_cxcywh(target_bboxes.reshape(-1, 4).clone()).view(target_shape) 
-            mask_wh = ((target_bboxes_xywh[..., 2:] < self.strides[0]) * gt_mask).bool()
-            target_bboxes_xywh[..., 2:].masked_fill_(mask_wh, self.strides[1].to(dtype=target_bboxes_xywh.dtype, device=target_bboxes_xywh.device))
-            target_bboxes = cxcywh_to_xyxy(target_bboxes_xywh.reshape(-1, 4)).view(target_shape)
+            extent = upper - lower
+            midpoint = lower + extent * 0.5
+            strides = self.strides.to(extent)
+            expand = gt_mask.bool() & (extent < strides[0])
+            radius = torch.where(expand, strides[1], extent) * 0.5
+            lower, upper = midpoint - radius, midpoint + radius
 
-        x1 = target_bboxes[:,:,0].unsqueeze(-1) < anchor_points[:,0]
-        y1 = target_bboxes[:,:,1].unsqueeze(-1) < anchor_points[:,1]
-        x2 = target_bboxes[:,:,2].unsqueeze(-1) > anchor_points[:,0]
-        y2 = target_bboxes[:,:,3].unsqueeze(-1) > anchor_points[:,1]
-        result = (x1 & y1) & (x2 & y2)
-        return result.to(torch.float32)
-    
+        inside = (anchor_points > lower.unsqueeze(-2)) & (anchor_points < upper.unsqueeze(-2))
+        return inside.all(dim=-1).float()
+
     def compute_alignment_metric(self,
                                  pred_scores: torch.Tensor,
                                  pred_bboxes: torch.Tensor,

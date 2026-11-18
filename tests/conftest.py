@@ -1,4 +1,5 @@
 from pathlib import Path
+from importlib.resources import files
 
 import cv2
 import numpy as np
@@ -9,8 +10,7 @@ import yaml
 from yolo.config import SimplifiedConfig
 from yolo.core.model import SimplifiedDetectionModel
 
-REPO = Path(__file__).resolve().parents[1]
-MODEL_YAML = REPO / "yolo" / "model_config" / "yolo11.yaml"
+MODEL_YAML = Path(str(files("yolo").joinpath("model_config", "yolo11.yaml")))
 NC = 2
 
 

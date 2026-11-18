@@ -266,11 +266,13 @@ def mean_avg_precision(preds: List[List],
 
         f1 = 2 * p_all[:,:,0] * r_all[:,:,0] / (p_all[:,:,0] + r_all[:,:,0] + epsilon)
         mean_f1 = f1.mean(0)
-        nf = round(len(mean_f1) * 0.1 * 2) // 2 + 1
-        kernel = torch.ones(1, 1, nf) / nf
-        mean_f1_padded = torch.cat([mean_f1[:1].expand(nf // 2), mean_f1, mean_f1[-1:].expand(nf // 2)])
-        mean_f1 = torch.nn.functional.conv1d(mean_f1_padded.view(1, 1, -1), kernel).squeeze()
-        best_i = int(mean_f1.argmax())
+        # A centered 101-sample moving average on the 1000-point confidence grid.
+        curve = mean_f1.reshape(1, 1, -1)
+        padded = torch.nn.functional.pad(curve, (50, 50), mode="replicate")
+        # Weight each sample before accumulation to preserve threshold selection on plateaus.
+        weights = curve.new_full((1, 1, 101), 1 / 101)
+        smoothed = torch.nn.functional.conv1d(padded, weights)
+        best_i = int(smoothed.argmax())
 
         precisions_list = list(p_all[:, best_i, :])
         recalls_list    = list(r_all[:, best_i, :])

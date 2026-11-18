@@ -5,7 +5,6 @@ import torch.nn as nn
 import math
 
 from .conv import Conv, DWConv
-from yolo.engine.utils import feats_to_boxes, generate_anchors
 
 
 class DFL(nn.Module):
@@ -76,26 +75,30 @@ class Detect(nn.Module):
 
         return outputs if self.export else (outputs, xs)
     
-    def process_for_inference(self, 
-                              xs: List[torch.Tensor]) -> List[torch.Tensor]:
-        shape = xs[0].shape  # BCHW
-        xs_concat = torch.cat([xi.view(shape[0], self.no, -1) for xi in xs], 2)
-        if self.dynamic or self.shape != shape:
-            self.shape = shape
-            self.anchors, self.stride_tensor = generate_anchors(xs, self.stride)
-            self.anchors = self.anchors.transpose(0, 1)
-            self.stride_tensor = self.stride_tensor.transpose(0, 1) 
-        box,cls = xs_concat.split((self.reg_max * 4, self.number_classes), 1)
-        dbox = feats_to_boxes(self.dfl(box), self.anchors.unsqueeze(0), dim=1) * self.stride_tensor
+    def process_for_inference(self, xs: List[torch.Tensor]) -> torch.Tensor:
+        """Decode each pyramid level in its own grid before joining the predictions."""
+        levels = []
+        for level, prediction in enumerate(xs):
+            height, width = prediction.shape[-2:]
+            logits, classes = prediction.flatten(2).split(
+                (4 * self.reg_max, self.number_classes), dim=1
+            )
+            left, top, right, bottom = self.dfl(logits).unbind(dim=1)
+            grid_x = torch.arange(width, device=prediction.device, dtype=prediction.dtype)
+            grid_y = torch.arange(height, device=prediction.device, dtype=prediction.dtype)
+            rows, cols = torch.meshgrid(grid_y + 0.5, grid_x + 0.5, indexing="ij")
+            x_min, x_max = cols.flatten() - left, cols.flatten() + right
+            y_min, y_max = rows.flatten() - top, rows.flatten() + bottom
+            boxes = torch.stack(((x_min + x_max) * 0.5, (y_min + y_max) * 0.5,
+                                 x_max - x_min, y_max - y_min), dim=1)
+            pixels = boxes * self.stride[level].to(prediction)
+            levels.append(torch.cat((pixels, classes.sigmoid()), dim=1))
+        return torch.cat(levels, dim=-1)
 
-        return torch.cat((dbox, cls.sigmoid()), 1)
-
-
-    
+    @torch.no_grad()
     def bias_init(self):
-        for bbox_conv, class_conv, stride in zip(self.bbox_conv,self.class_conv,self.stride):
-            bbox_conv[-1].bias.data[:] = 1.0
-            class_conv[-1].bias.data[:] = math.log(5 / self.number_classes / (self.img_size / stride) ** 2)
-
-
-
+        for level, stride in enumerate(self.stride):
+            cells = (self.img_size / float(stride)) ** 2
+            log_prior = math.log(5.0 / (cells * self.number_classes))
+            self.class_conv[level][-1].bias.fill_(log_prior)
+            self.bbox_conv[level][-1].bias.fill_(1.0)

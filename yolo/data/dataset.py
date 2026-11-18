@@ -367,30 +367,19 @@ class YoloDataset(Dataset):
 
     def set_rect_shapes(self, batch_size: int, stride: int = 32, pad: float = 0.0):
         """Sort by aspect ratio and compute per-batch target shapes."""
-        n = self.length_of_labels
-        shapes = np.array([self.dataset["labels"][i]["img_shape"] for i in range(n)], dtype=np.float64)
-         # h / w
-        ar = shapes[:, 0] / shapes[:, 1] 
-
-        sorted_order = ar.argsort()
-        self.indices = sorted_order.tolist()
-
-        bi = np.floor(np.arange(n) / batch_size).astype(int)
-        num_batches = bi[-1] + 1
-        self.batch_shapes = np.zeros((num_batches, 2), dtype=np.int64)
-
-        ar_sorted = ar[sorted_order]
-        for i in range(num_batches):
-            ari = ar_sorted[bi == i]
-            mini, maxi = ari.min(), ari.max()
-            if maxi < 1:
-                shape_ratio = np.array([maxi, 1], dtype=np.float64)
-            elif mini > 1:
-                shape_ratio = np.array([1, 1 / mini], dtype=np.float64)
-            else:
-                shape_ratio = np.array([1, 1], dtype=np.float64)
-
-            self.batch_shapes[i] = (np.ceil(shape_ratio * self.imgsz / stride + pad) * stride).astype(np.int64)
+        shapes = [entry["img_shape"] for entry in self.dataset["labels"][:self.length_of_labels]]
+        dimensions = np.asarray(shapes, dtype=np.float64).reshape(-1, 2)
+        ratios = dimensions[:, 0] / dimensions[:, 1]
+        order = np.argsort(ratios)
+        self.indices = order.tolist()
+        sorted_ratios = ratios[order]
+        # In sorted order the first and last image bound each batch's aspect ratios.
+        first = sorted_ratios[::batch_size]
+        ends = np.minimum(np.arange(len(first)) * batch_size + batch_size, len(order)) - 1
+        last = sorted_ratios[ends]
+        relative_hw = np.column_stack((np.minimum(last, 1.0), 1.0 / np.maximum(first, 1.0)))
+        grid_cells = np.ceil(relative_hw * self.imgsz / stride + pad)
+        self.batch_shapes = grid_cells.astype(np.int64) * stride
 
     @property
     def ni(self):
