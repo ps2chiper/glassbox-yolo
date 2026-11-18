@@ -1,6 +1,6 @@
 # Glassbox YOLO
 
-A YOLO training pipeline re-implemented from scratch, mainly to understand and control every part of the process instead of relying on a large framework. It also sidesteps the AGPL-3.0 license, which requires open-sourcing any derivative or networked use of their code.
+A YOLO training pipeline re-implemented from scratch, mainly to understand and control every part of the process instead of relying on a large framework.
 
 ## Models
 
@@ -199,4 +199,4 @@ The tests run on CPU in a few seconds and also run in GitHub Actions on every pu
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+Glassbox's own code is offered under the [MIT license](LICENSE). Mosaic image placement uses Pillow's `Image.paste`. The overlap resolver in `yolo/engine/utils.py` adapts the [MMDetection task-aligned assigner](https://github.com/open-mmlab/mmdetection/blob/cfd5d3a985b0249de009b67d04f37263e11cdf3d/mmdet/models/task_modules/assigners/task_aligned_assigner.py) for batched tensors and Glassbox's collision rules. That adaptation is covered by the [MMDetection Apache-2.0 license](yolo/licenses/MMDetection-LICENSE.txt).

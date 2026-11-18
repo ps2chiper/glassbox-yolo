@@ -33,7 +33,7 @@ include = ["yolo", "yolo.*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-yolo = ["model_config/*.yaml"]
+yolo = ["model_config/*.yaml", "licenses/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

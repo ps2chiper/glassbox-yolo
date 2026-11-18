@@ -106,9 +106,7 @@ class TaskAlignedAssigner(nn.Module):
                  beta: float = 6.0,
                  eps: float = 1e-9):
         super().__init__()
-        topk2 = None
         self.topk = topk
-        self.topk2 = topk2 or topk
         self.number_of_classes = number_of_classes
         self.expand_small_boxes = expand_small_boxes
         self.alpha = alpha
@@ -217,36 +215,20 @@ class TaskAlignedAssigner(nn.Module):
                              overlaps: torch.Tensor, 
                              max_num_targets: int,
                              align_metric: torch.Tensor):
-        '''
-        Get anchor boxes with highest IuO when assigned to multiple ground truth boxes
-        pos_mask: (batch_size, max_num_targets, num_anchors)
-        overlaps: (batch_size, max_num_targets, num_anchors)
-        max_num_targets: int
-        aign_metric: (batch_size, max_num_targets, num_anchors)
-        '''
-        foreground_mask = pos_mask.sum(-2)
-        if foreground_mask.max() > 1:
-            topk_overlaps_indices = overlaps.argmax(1).unsqueeze(1)
-            mask_scatter = torch.zeros_like(pos_mask).scatter_(1, topk_overlaps_indices, 1)
+        """Resolve assignments for each anchor and return a batched target mask."""
+        # Adapted from OpenMMLab MMDetection, Copyright (c) OpenMMLab.
+        # Apache-2.0. Batched for Glassbox, retaining its collision and background rules.
+        candidates = pos_mask.bool()
+        foreground = candidates.any(dim=1)
+        collision = candidates.sum(dim=1, keepdim=True) > 1
+        # Glassbox compares all targets on a collision, including unselected targets.
+        eligible = candidates | collision
+        ranked = overlaps.masked_fill(~eligible, -torch.inf)
+        target_index = ranked.argmax(dim=1)
+        resolved = torch.zeros_like(pos_mask)
+        resolved.scatter_(1, target_index.unsqueeze(1), foreground.unsqueeze(1).to(pos_mask.dtype))
+        return target_index, foreground.to(pos_mask.dtype), resolved
 
-            
-            mask_multi_gts = torch.where(foreground_mask.unsqueeze(1) > 1, True, False).expand(-1, max_num_targets, -1)
-            pos_mask = torch.where(mask_multi_gts, mask_scatter, pos_mask)
-            foreground_mask = pos_mask.sum(-2)
-            #return new_pos_mask.argmax(-2),foreground_mask, new_pos_mask
-        if self.topk2 != self.topk:
-            align_metric = align_metric * pos_mask
-            _,max_overlaps_idx = torch.topk(align_metric, self.topk2, dim=-1, largest=True)
-            topk2_idxs = torch.zeros_like(pos_mask).scatter_(-1, max_overlaps_idx, 1.0)
-            pos_mask *= topk2_idxs
-            foreground_mask = pos_mask.sum(-2)
-
-        topk_overlaps_indices = pos_mask.argmax(-2)
-
-        return topk_overlaps_indices, foreground_mask, pos_mask
-
-
-        
     def get_targets(self,
                     target_labels: torch.Tensor,
                     target_bboxes: torch.Tensor,

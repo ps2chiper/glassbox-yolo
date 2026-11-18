@@ -406,39 +406,21 @@ class Mosaic_simplified:
         random_y_center = int(random.uniform((self.imgsz * 2) * 0.25, (self.imgsz * 2) * 0.75))
         random_x_center = int(random.uniform((self.imgsz * 2) * 0.25, (self.imgsz * 2) * 0.75))
         
-        mosaic_img = np.full((s * 2, s * 2, 3), 114, dtype=np.uint8)
-        mosaic_h, mosaic_w = mosaic_img.shape[:2]
-        
+        mosaic_w = mosaic_h = 2 * s
+        canvas = Image.new("RGB", (mosaic_w, mosaic_h), (114, 114, 114))
         mosaic_bboxes = []
         mosaic_classes = []
-        
+
         for i, item in enumerate(data_dict):
-            h, w = item["resized_shape"]
-            img = item["image"]
-            bboxes = item["bboxes"] 
-            cls = item["bbox_classes"]  
-            
-            # Calculate placement coordinates
-            if i == 0:  # top left
-                x1l, y1l, x2l, y2l = max(random_x_center - w, 0), max(random_y_center - h, 0), random_x_center, random_y_center
-                x1s, y1s, x2s, y2s = w - (x2l - x1l), h - (y2l - y1l), w, h # bottom right of source image
-            elif i == 1:  # top right
-                x1l, y1l, x2l, y2l = random_x_center, max(random_y_center - h, 0), min(random_x_center + w, s * 2), random_y_center
-                x1s, y1s, x2s, y2s = 0, h - (y2l - y1l), min(w, x2l - x1l), h # bottom left of source image
-            elif i == 2:  # bottom left
-                x1l, y1l, x2l, y2l = max(random_x_center - w, 0), random_y_center, random_x_center, min(s * 2, random_y_center + h)
-                x1s, y1s, x2s, y2s = w - (x2l - x1l), 0, w, min(y2l - y1l, h) # top right of source image
-            elif i == 3:  # bottom right
-                x1l, y1l, x2l, y2l = random_x_center, random_y_center, min(random_x_center + w, s * 2), min(s * 2, random_y_center + h)
-                x1s, y1s, x2s, y2s = 0, 0, min(w, x2l - x1l), min(y2l - y1l, h) # top left of source image
-            
-            # Place image slice into mosaic
-            mosaic_img[y1l:y2l, x1l:x2l] = img[y1s:y2s, x1s:x2s]
-            
-            # Calculate padding for bounding boxes
-            padw = x1l - x1s
-            padh = y1l - y1s
-            
+            tile = Image.fromarray(item["image"])
+            row, column = divmod(i, 2)
+            padw = random_x_center - tile.width if column == 0 else random_x_center
+            padh = random_y_center - tile.height if row == 0 else random_y_center
+            # Pillow clips the translated tile against the canvas on all four edges.
+            canvas.paste(tile, (padw, padh))
+            bboxes = item["bboxes"]
+            cls = item["bbox_classes"]
+
             # Adjust bounding boxes for this image
             if len(bboxes) > 0:
                 # Add padding to all bboxes
@@ -468,7 +450,7 @@ class Mosaic_simplified:
             mosaic_bboxes = np.zeros((0, 4), dtype=np.float32)
             mosaic_classes = np.zeros((0, 1), dtype=np.float32)
         
-        return mosaic_img, mosaic_bboxes, mosaic_classes
+        return np.array(canvas), mosaic_bboxes, mosaic_classes
 
 
 class RandomAffine:
